@@ -80,11 +80,19 @@
                 <td>{{ formData.email }}</td>
                 <td class="d-flex  justify-content-center gap-3 ">
                   <button @click="badgeClick()" class="btn btn-success">Je Badge !</button>
-                  <button class="btn btn-secondary" type="button" @click="showWorkingTimes=true;getWorkingTimes()"> Mes Working Times</button>
+                  <button class="btn btn-secondary" type="button" @click="showWorkingTimes=true;getWorkingTimes(this.userId)"> Mes Working Times</button>
 
                   <button type="button" @click="showModel" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#staticBackdrop">Modifier</button>
                   <button @click="supprimerUser(this.userId)" class="btn btn-danger">Supprimer</button>
+
                 </td>
+                <div class="form-group">
+                  <label for="dashStart">Début :</label>
+                  <input type="dashStart" class="form-control" id="dashStart" v-model="dashStart" placeholder=" entre la date de début "/>
+                  <label for="dashEnd">Fin :</label>
+                  <input type="dashEnd" class="form-control" id="dashEnd" v-model="dashEnd" placeholder=" entre la date de fin "/>
+                  <button class="btn btn-secondary" type="button" @click="showDashboard(this.userId, dashStart, dashEnd)">Graphique de mes heures</button>
+                </div>
               </tr>
               </tbody>
             </table>
@@ -92,6 +100,12 @@
         </div>
       </div>
     </div>
+
+    <div v-if="chartExist">
+      <myChart :chartInput="this.chartData"/>  
+      <!-- :chartValues="this.chartData.chartValues" :chartTitle="this.chartData.chartTitle"/> -->
+    </div>
+
 
     <div v-if="userExists" class="user-info">
       <div class="container">
@@ -152,9 +166,6 @@
       <p>L'utilisateur n'existe pas dans la base de données.</p>
     </div>
 
-
-
-
     <div class="modal fade" id="staticBackdrop" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-labelledby="staticBackdropLabel" aria-hidden="true">
       <div class="modal-dialog">
         <div class="modal-content">
@@ -184,7 +195,6 @@
 
 </template>
 <script>
-let nbClick =0;
 
 let nbClick =0 ;
 
@@ -194,10 +204,16 @@ import 'moment-timezone';
 import { onMounted } from 'vue';
 import * as bootstrap from 'bootstrap';
 import 'bootstrap';
+import myChart from './Charts.vue';
+
 window.bootstrap = bootstrap;
 let myModal;
 
 export default {
+  components: {
+    myChart,
+  },
+
   setup() {
 
     onMounted(() => {
@@ -252,24 +268,67 @@ export default {
       showErrorMessage: false,
       isEditing: false,
       startDay: null,
+      chartData: {},
+      chartExist: false,
     };
   },
   computed: {},
   methods: {
 
-    calculateWorkingDuration(start, end) {
+    calculateWorkingDuration(start, end, retHours=false) {
       const startTime = moment(start);
       const endTime = moment(end);
       const duration = moment.duration(endTime.diff(startTime));
       const hours = Math.floor(duration.asHours());
       const minutes = duration.minutes();
 
-      return `${hours} heures ${minutes} minutes`;
+      if (retHours) {
+        return hours + (minutes / 60)
+      }
+      return {hours:hours, minutes:minutes}
+    },
+
+    async showDashboard(user_id, startDate, endDate) {
+      const start = moment(startDate).format('YYYY-MM-DD HH:mm:SS')
+      const end = moment(endDate).format('YYYY-MM-DD HH:mm:SS')
+      const response = await axios.get(
+        `http://localhost:4000/api/working_times/${user_id}?start=${start}&end=${end}`);
+      
+      const myDates = []
+      response.data.forEach((wt) => myDates.push(wt["start"], wt["end"]));
+      
+      const res = [0]
+      var tmp
+      var i = 0
+      const rLenght = response.data.length
+      console.log(`lenght ${rLenght}`)
+
+      while (i < rLenght) {
+        const lmt = response.data.at(i)
+        tmp = this.calculateWorkingDuration(lmt["start"], lmt["end"], true)
+        res.push(tmp)
+        i++
+        if (i < rLenght) {
+          res.push(tmp)}
+      }
+
+      console.log(`res var ${res}`)
+      this.chartData = {
+        chartTitle: "test graph", chartLabels: myDates, chartValues: res}
+      this.chartExist = true
+    },
+
+    async calculateHoursWorked(wt) {
+      const res = []
+      wt.forEach((lmt) => res.push(this.calculateWorkingDuration(lmt["start"], lmt["end"], true)));
+      console.log(res)
+      return res
     },
 
     formatWorkingTime(date) {
-      return moment(date).subtract(1, 'hour').format('YYYY-MM-DD HH:mm');
+      return moment(date).subtract(1, 'hour').format('YYYY-MM-DD HH:mm:SS');
     },
+
     async createClock(user_id) {
       try {
         const currentDate = moment().tz('Europe/Paris');
@@ -294,7 +353,7 @@ export default {
         this.startDay = today;
         this.workingTimeData.start = this.startDay
         this.workingTimeData.user_id = this.userId
-        this.workingTimeData.end = "2023-10-30T16:34:00Z"
+        this.workingTimeData.end = this.startDay
         console.log(this.workingTimeData)
 
         axios.post(`http://localhost:4000/api/working_times/${this.userId}`, {working_time: this.workingTimeData})
@@ -327,10 +386,10 @@ export default {
       nbClick = 0;
     },
 
-  async getWorkingTimes() {
+  async getWorkingTimes(user_id) {
     try {
       // Effectuer une requête GET pour obtenir les détails de l'utilisateur
-      const response = await axios.get(`http://localhost:4000/api/working_times/${this.userId}`);
+      const response = await axios.get(`http://localhost:4000/api/working_timesAll/${user_id}`);
       this.workingTimeData = response.data;
       console.log(this.workingTimeData)
       // Mettez en œuvre la logique nécessaire après avoir obtenu les détails de l'utilisateur ici
@@ -354,7 +413,7 @@ export default {
   },
 
   formattedDate(date) {
-    return moment.tz(date, 'Europe/Paris').format('DD-MM-YYYY H:mm');
+    return moment.tz(date, 'Europe/Paris').format('DD-MM-YYYY HH:mm:SS');
   },
 
   async getClock() {
